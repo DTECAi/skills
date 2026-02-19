@@ -114,7 +114,7 @@ def generate_id(entry: dict, existing_ids: list[str]) -> str:
         counter += 1
 
 
-def add_entry(kb_dir: Path, entry: dict) -> None:
+def add_entry(kb_dir: Path, entry: dict, force: bool = False) -> None:
     """Add a new entry to the knowledge base."""
     index_data = load_index(kb_dir)
     existing_ids = [e["id"] for e in index_data["entries"]]
@@ -132,22 +132,24 @@ def add_entry(kb_dir: Path, entry: dict) -> None:
     if "date_saved" not in entry:
         entry["date_saved"] = datetime.now().strftime("%Y-%m-%d")
 
-    # Duplicate check (same author + date_posted + platform)
-    for existing in index_data["entries"]:
-        if (
-            existing.get("author") == entry.get("author")
-            and existing.get("date_posted") == entry.get("date_posted")
-            and existing.get("source_platform") == entry.get("source_platform")
-        ):
-            print(
-                f"Warning: Possible duplicate detected.\n"
-                f"  Existing: {existing['id']} — {existing.get('summary', '')}\n"
-                f"  Add anyway? (y/N): ",
-                end="",
-            )
-            if input().strip().lower() != "y":
-                print("Skipped.")
-                return
+    # Duplicate check (same author + date_posted + platform, only when date_posted known)
+    date_posted = entry.get("date_posted", "")
+    if not force and date_posted:
+        for existing in index_data["entries"]:
+            if (
+                existing.get("author") == entry.get("author")
+                and existing.get("date_posted") == date_posted
+                and existing.get("source_platform") == entry.get("source_platform")
+            ):
+                print(
+                    f"Warning: Possible duplicate detected.\n"
+                    f"  Existing: {existing['id']} — {existing.get('summary', '')}\n"
+                    f"  Add anyway? (y/N): ",
+                    end="",
+                )
+                if input().strip().lower() != "y":
+                    print("Skipped.")
+                    return
 
     # Build index entry (compact version)
     content = entry.get("content", "")
@@ -216,6 +218,7 @@ def search_entries(kb_dir: Path, query: str, category: str | None = None) -> Non
     entries = index_data["entries"]
 
     query_lower = query.lower()
+    query_hyphenated = query_lower.replace(" ", "-")
     results = []
 
     for entry in entries:
@@ -231,7 +234,8 @@ def search_entries(kb_dir: Path, query: str, category: str | None = None) -> Non
             entry.get("url", ""),
         ]).lower()
 
-        if query_lower in searchable:
+        # Match both space-separated and hyphenated forms of the query
+        if query_lower in searchable or query_hyphenated in searchable:
             results.append(entry)
 
     if not results:
@@ -375,6 +379,7 @@ def main() -> None:
     # add
     add_parser = subparsers.add_parser("add", help="Add a new entry")
     add_parser.add_argument("--data", required=True, help="JSON string of the entry data")
+    add_parser.add_argument("--force", action="store_true", help="Skip duplicate confirmation prompt")
     add_parser.add_argument("--kb-dir", help="Path to knowledge-base directory")
 
     # search
@@ -415,7 +420,7 @@ def main() -> None:
         except json.JSONDecodeError as e:
             print(f"Error: invalid JSON — {e}")
             sys.exit(1)
-        add_entry(kb_dir, entry)
+        add_entry(kb_dir, entry, force=getattr(args, "force", False))
 
     elif args.command == "search":
         search_entries(kb_dir, args.query, getattr(args, "category", None))
